@@ -1,8 +1,68 @@
-﻿# Saga State Machines
+﻿[MassTransit.io](https://masstransit.io/documentation/patterns/saga/state-machine)
 
-# Introduction
+# Saga Overview
 
-## State Machine
+- Saga Pattern, bir dizi event'ı düzenli bir şekilde yönetmek için kullanılan bir pattern'dir.
+- Bir saga, bir koordinatör tarafından yönetilen uzun süreli transaction'dır.
+- Saga'lar bir event ile başlatılır, sagalar event'ları organize eder ve genel işlemin state'ini korurlar.
+- Saga'lar dağıtılan transaction'ların getirdiği complexitiyi locking olmadan ve tutarlı bir şekilde yönetmek için tasarlanmıştır.
+- State'i yönetirler ve bir hata durumunda alınacak aksiyonları takip ederler.
+
+## State Machine Sagas
+
+- MassTransit, saga'lar oluşturmak için güçlü bir syntax olarak *state machine*'leri sunar. MassTransit kullanılıyorsa *state machine*'lerin kullanılması kesinlikle önerilir.
+
+## Consumer Sagas
+
+- MassTransit ilişkilendirilmiş saga event'larını consume etmek için bir veya daha fazla interface'i implement eden *consumer sagas* yapısını da destekler.
+
+## Definitions
+
+- Saga tanımlamaları, consumer'ların davranışlarını belirlemek için kullanılır, otomatik olarak yapılandırılabilirler.
+- Tanımlamalar `AddSaga` ile açıkça yapılabilir veya `AddSagas`yöntemlerinde birisi kullanılarak otomatik olarak yapılandırılabilir. Örnek olarak basit bir saga tanımlaması:
+
+	```
+	public class OrderStateDefinition :
+		SagaDefinition<OrderState>
+	{
+		public OrderStateDefinition()
+		{
+			// specify the message limit at the endpoint level, which influences
+			// the endpoint prefetch count, if supported
+			Endpoint(e => e.ConcurrentMessageLimit = 16);
+		}
+
+		protected override void ConfigureSaga(IReceiveEndpointConfigurator endpointConfigurator, ISagaConfigurator<OrderState> sagaConfigurator)
+		{
+			var partition = endpointConfigurator.CreatePartitioner(16);
+
+			sagaConfigurator.Message<SubmitOrder>(x => x.UsePartitioner(partition, m => m.Message.CorrelationId));
+			sagaConfigurator.Message<OrderAccepted>(x => x.UsePartitioner(partition, m => m.Message.CorrelationId));
+			sagaConfigurator.Message<OrderCanceled>(x => x.UsePartitioner(partition, m => m.Message.CorrelationId));
+		}
+	}
+	```
+
+# Consumer Sagas
+
+## Interfaces
+
+### InitiatedBy
+
+### Orchestrates
+
+### InitiatedByOrchestrates
+
+### Observes
+
+## Configuration
+
+
+# Saga State Machines
+
+## Introduction
+
+### State Machine
 
 - Bir `state machine` sonu olan state akışlarının state'lerini, event'larını ve davranışlarını tanımlar.
 - `MassTransitStateMachine<T>` sınıfından kalıtım alan bir class olarak tanımlanan **state machine** bir kez oluşturulur ve sonrasında event'ler ile tetiklenen davranışları **state machine instance**'larına uygulamak için kullanılır.
@@ -14,7 +74,7 @@
 	}
 	```
 
-## Instance
+### Instance
 
 - Bir instance, **state machine instance** için gerekli verileri içerir. 
 - Aynı *CorrelationId*'ye sahip mevcut bir instance bulunamadığı zaman, consume edilen her `initial` event'i için yeni bir instance oluşturulur.
@@ -66,7 +126,7 @@
 	
 	Yukarıdaki *CurrentState* değerleri şu şekilde olacaktır: `0-None, 1-Initial, 2-Final, 3-Submitted, 4-Accepted`
 
-## State
+### State
 
 - State kavramı, bir instance'ın *CurrentState* durumunda olmasına neden olan daha önce tüketilmiş olayları temsil eder.
 - Bir instance herhangi bir anda sadece bir state'e sahip olabilir.
@@ -83,7 +143,7 @@
 	}
 	```
 
-## Event 
+### Event 
 
 - State değerinin değişmesine neden olabilecek şeylere *Event* denir. 
 - Bir Event bir instance'a yeni bir data ekleyebilir veya var olan datayı güncelleyebilir. Ayrıca bir instance'ın *CurrentState* değerini değiştirebilir.
@@ -112,7 +172,7 @@
 
 	Event'ler `CorrelatedBy<Guid>` kullanmadığında *correlation expression* kullanmak zorundadır.
 
-## Behavior
+### Behavior
 
 - Behavior, instance bir state durumundayken bir event meydana geldiğine yapılacak şeydir.
 - Alt kısımdaki örnekte *Initial* durumundayken *SubmitOrder* eventinin davranışını tanımlamak için `Initially` bloğu kullanılıyor.
@@ -158,7 +218,7 @@
 
 	```
 
-### Message Order
+#### Message Order
 
 - Mesaj kuyrukları genellikle mesajların sıralı olmasını garanti etmez. State machine oluştururken sıralı olmayan mesajları da düşünerek geliştirme yapılması önemlidir.
 - Alt kısımdaki örnekte, *SubmitOrder* mesajının *OrderAccepted* mesajından sonra gelmesi durumunda *SubmitOrder* mesajı *_error* kuyruğuna gönderilecektir.
@@ -228,7 +288,7 @@
 
 	```
 
-## Configuration
+### Configuration
 
 - Bir saga state machine şu şekilde configure edilebilir:
 
@@ -243,7 +303,7 @@
 
 	Bu örnekde in-memory saga repository kullanılıyor fakat herhangi birisi de kullanılabilirdi. Sonraki kısımlarda saga repository'ler ile ilgili detaylar verilecektir.
 
-# Event
+## Event
 
 - Yukarıda tanımlandığı üzere event kavramı state machine'ler tarafından consume edilen mesajlardır.
 - Event'lar geçerli bir mesaj tipini belirtebilir ve her event configure edilebilir. Birkaç farklı event configuration fonksiyonu mevcuttur.
@@ -376,7 +436,7 @@
 	```
 	.SelectId(x => x.CorrelationId ?? NewId.NextGuid());
 	```
-## Ignore Event
+### Ignore Event
 
 - Bazı durumlarda mesajların *_skipped_* kuyruğuna gönderilmesini engellemek için veya hata oluşmasından kaçınmak için event'ların görmezeden gelinmesi gerekebilir.
 - Verilen state'de bir event'ı ignore'lamak için `Ignore` fonksiyonu kullanılır. Örnek olarak:
@@ -403,7 +463,7 @@
 	}
 	```
 
-## Composite Event
+### Composite Event
 
 - Composite event, tüketilmesi gereken bir veya daha fazla olay belirtilerek yapılandırılır. Bu olaylar tamamlandıktan sonra composite event tetiklenir.
 - Required olaran tanımlanan event'ları takip etmek için kullanılacak instance property'si configuration aşamasında belirtilir.
@@ -449,7 +509,7 @@
 
 - Olayların tanımlanma sırası, yürütülme sıralarını etkileyebilir. Bu nedenle, bileşik olayları diğer tüm olayları ve davranışlarını tanımladıktan sonra state machine'in sonunda tanımlamak en iyisidir.
 
-## Missing Instance
+### Missing Instance
 
 - Eğer bir event herhangi bir instance ile eşleşmez ise, *missing instance behavior* yapılandırılabilir. Örnek olarak:
 
@@ -488,7 +548,7 @@
 	Bir hata durumu oluşturmak yerine daha anlamlı bir dönüş sağlanmış olur.
 	Missing instance durumunda kullanılabilecek diğer seçenekler *Discard*, *Fault* ve *Execute* işlemleridir.
 
-## Initial Insert
+### Initial Insert
 
 - Yeni instance oluşturma performansını arttırmak için event'i direkt olarak saga repository'a kaydederek lock durumlarını azaltabilecek şekilde yapılandırabiliriz.
 - Saga repository'e kaydetme işlemi `Initially` bloğu içerisinde olmalı. Örnek olarak:
@@ -561,7 +621,7 @@
 	}
 	```
 
-## Completed Instance
+### Completed Instance
 
 - Default kullanımda instance'lar saga repository'den silinmezler. Tamamlanan instance'ların silinmesini istiyorsak, instance tamamlandığında kullanılacak fonksiyonu belirtmemiz gerekiyor. Örnek olarak:
 
@@ -624,11 +684,11 @@
 	}
 	```
 
-# Activities
+## Activities
 
 - State machine activities, bir event'a yanıt olarak yürütülen bir dizi aktivite olarka tanımlanır.
 
-## Publish
+### Publish
 
 - Bir event publish etmek için `Publish` aktivitesi kullanılabilir. Örnek olarak:
 
@@ -684,7 +744,7 @@
 
 	```
 
-## Send
+### Send
 
 - Bir mesaj göndermek için `Send` aktivitesi kullanılabilir. Örnek olarak:
 
@@ -739,7 +799,7 @@
 	}
 	```
 
-## Respond
+### Respond
 
 - State machine request mesaj tipini bir event olarak yapılandırarak ve `Respond` fonksiyonunu kullanarak request'lere yanıt verebilir.
 - Request event'ını yapılandırırken *missing instance* fonksiyonunu kullanmak daha iyi bir response süreci sağlamak adına önerilen bir yöntemdir. Örnek olarak:
@@ -873,7 +933,7 @@
 	```
 
 
-## Schedule
+### Schedule
 
 - Schedule işlemlerinin sağlanabilmesi için bus'ın *message scheduler*'ı içerecek şekilde yapılandırılması gerekir.
 - Bir state machine, bir mesajı instance'a iletmek üzere planlamak için *message scheduler* kullanan event'ları planlayabilir. İlk olarak schedule tanımlanmalı, örnek olarak:
@@ -953,7 +1013,7 @@
 	}
 	```
 
-## Request
+### Request
 
 - Bir state machine, request tipini ve response tipini belirten `Request` fonksiyonu ile bir request gönderebilir.
 - *ServiceAddress* ve *Timeout* dahil olmak üzere ek request ayarları belirtilebilir.
@@ -967,7 +1027,7 @@
 - İstek tamamlandığında, property temizlenir.
 - İstek time out olursa veya fault olursa, *RequestId* saklanır, bu sayede bu istekler daha sonra tekrar eşleştirilebilir.
 
-### Configuration
+#### Configuration
 
 - Bir request tanımlamak için, *Request* property'si eklenmeli ve `Request` fonksiyonu ile yapılandırılmalı. Örnek olarak:
 
@@ -1041,7 +1101,7 @@
 - *Request* 3 event içerir: *Completed, Faulted, TimeoutExpired*. Bu event'lar herhangi bir state'teyken consume edilebilir.
 - *Request* ayrıca *Pending* state'ine sahiptir.
 
-### Missing Instance
+#### Missing Instance
 
 - Eğer saga instance'ı response'dan önce sonlandırılırsa, *fault* veya *timeout* alınır, bu tarz durumlar için handler tanımlamaları yapılabilir. Örnek olarak:
 
@@ -1053,3 +1113,19 @@
 		r.TimeoutExpired = m => m.OnMissingInstance(i => i.Discard());
 	});
 	```
+
+# Persistence
+
+## Order State
+
+## Container Integration
+
+## Identity
+
+## Publishing and Sending From Sagas
+
+## Relational DB Recommendations
+
+## Optimistic vs pessimistic concurrency
+
+# Guidance
