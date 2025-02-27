@@ -45,22 +45,157 @@
 
 # Consumer Sagas
 
+- Consumer saga bir class olarak oluşturulur, içerisinde identifier olarak *CorrelationId* değeri olur. Bu değer saga repository içerisindeki state'i tanımlar.
+- State ile birlikte saga tarafından handle edilen event'ları tanımlamak için consumer sınıfına interface'ler eklenebilir.
+- State ve behavior'ların bir sınıf içerisinde birleşmesine *consumer saga* denir.
+
 ## Interfaces
 
 ### InitiatedBy
 
+```
+public record SubmitOrder :
+    CorrelatedBy<Guid>
+{
+    public Guid CorrelationId { get; init; }
+    public DateTime OrderDate { get; init; }
+}
+
+public class OrderSaga :
+    ISaga,
+    InitiatedBy<SubmitOrder>
+{
+    public Guid CorrelationId { get; set; }
+
+    public DateTime? SubmitDate { get; set; }
+    public DateTime? AcceptDate { get; set; }
+
+    public async Task Consume(ConsumeContext<SubmitOrder> context)
+    {
+        SubmitDate = context.Message.OrderDate;
+    }
+}
+```
+
+- Saga'nın receive endpointi tarafından bir *SubmitOrder* mesajı consume edildiğinde, *CorrelationId* property'si aynı id'ye sahip bir instance olup olmadığını kontrol etmek için kullanılır.			
+  Eğer saga repository içerisinde gelen *CorrelationId*'li bir instance bulunamazsa, repository yeni bir instance oluşturur ve instance içerisindeki *Consume* fonksiyonunu çağırır.
+  *Consume* fonksiyonu tamamlandıktan sonra saga repository yeni oluşturulan instance'ı kaydeder. 
+
 ### Orchestrates
+
+- Var olan bir saga instance'ı tarafından orchestrate edilen bir event tanımlamak için ek olarak interface ve fonksiyon belirtilmelidir. Örnek olarak:
+
+	```
+	public record OrderAccepted :
+		CorrelatedBy<Guid>
+	{
+		public Guid CorrelationId { get; init; }
+		public DateTime Timestamp { get; init; }
+	}
+
+	public class OrderSaga :
+		ISaga,
+		InitiatedBy<SubmitOrder>,
+		Orchestrates<OrderAccepted>,
+	{
+		public Guid CorrelationId { get; set; }
+
+		public DateTime? SubmitDate { get; set; }
+		public DateTime? AcceptDate { get; set; }
+
+		public async Task Consume(ConsumeContext<SubmitOrder> context) {...}
+
+		public async Task Consume(ConsumeContext<OrderAccepted> context)
+		{
+			AcceptDate = context.Message.Timestamp;
+		}
+	}
+	```
 
 ### InitiatedByOrchestrates
 
+- Yeni bir saga instance'ını başlatabilecek veya mevcut bir saga instance'ını yönlendirebilecek bir event tanımlamak için ek bir interface ve metot belirtilmelidir. Örnek olarak:
+
+	```
+	public record OrderInvoiced :
+		CorrelatedBy<Guid>
+	{
+		public Guid CorrelationId { get; init; }
+		public DateTime Timestamp { get; init; }
+		public decimal Amount { get; init; }
+	}
+
+	public class OrderPaymentSaga :
+		ISaga,
+		InitiatedByOrOrchestrates<OrderInvoiced>
+	{
+		public Guid CorrelationId { get; set; }
+
+		public DateTime? InvoiceDate { get; set; }
+		public decimal? Amount { get; set; }
+
+		public async Task Consume(ConsumeContext<OrderInvoiced> context)
+		{
+			InvoiceDate = context.Message.Timestamp;
+			Amount = context.Message.Amount;
+		}
+	}
+	```
+
 ### Observes
+
+- Mevcut bir saga instance'ı tarafından gözlemlenen ancak *CorrelatedBy* interface'ini implement etmeyen bir event tanımlamak için ek bir interface ve metot belirtilir. Örnek olarak:
+
+	```
+	public record OrderShipped
+	{
+		public Guid OrderId { get; init; }
+		public DateTime ShipDate { get; init; }
+	}
+
+	public class OrderSaga :
+		ISaga,
+		InitiatedBy<SubmitOrder>,
+		Orchestrates<OrderAccepted>,
+		Observes<OrderShipped, OrderSaga>
+	{
+		public Guid CorrelationId { get; set; }
+
+		public DateTime? SubmitDate { get; set; }
+		public DateTime? AcceptDate { get; set; }
+		public DateTime? ShipDate { get; set; }
+
+		public async Task Consume(ConsumeContext<SubmitOrder> context) {...}
+		public async Task Consume(ConsumeContext<OrderAccepted> context) {...}
+
+		public async Task Consume(ConsumeContext<OrderShipped> context)
+		{
+			ShipDate = context.Message.ShipDate;
+		}
+
+		public Expression<Func<OrderSaga, OrderShipped, bool>> CorrelationExpression =>
+			(saga,message) => saga.CorrelationId == message.OrderId;
+	}
+	```
 
 ## Configuration
 
+- MassTransit'i yapılandırırken bir saga eklemek istiyorsak `AddSaga` fonksiyonunu kullanabiliriz. Örnek olarak:
+	```
+	services.AddMassTransit(x =>
+	{
+		x.AddSaga<OrderSaga>()
+			.InMemoryRepository();
+	});
+
+	```
 
 # Saga State Machines
 
 ## Introduction
+
+- *Automatonymous* .NET için bir state machine library'sidir. MassTransit, *Automatonymous* kütüphanesini içerir ve ek özellikler ekler. 
+  MassTransit'in eski sürümlerinde *Automatonymous* paketinin uygulamaya ayrı olarak eklenmesi gerekiyordu fakat MassTransit v8 ile birlikte *Automatonymous* kütüphanesi MassTransit içerisine dahil edildi.
 
 ### State Machine
 
@@ -424,7 +559,8 @@
 
 	```
 
-	Event içerisinde instance ile unique olarak ilişki kurulmasını sağlayan bir *Guid* olmadığında `.SelectId` expression kullanılmak zorunda. 							
+	Event içerisinde instance ile unique olarak ilişki kurulmasını sağlayan bir *Guid* olmadığında `.SelectId` expression kullanılmak zorunda. 						
+	
 	Yukarıdaki örnekte instance'ın *CorrelationId* alanına atacanak olan değeri oluşturmak için `NewId` kullanılmış.
 - *CorrelationId* ile ilişkilendirme yapmak yerine `.SelectId` ile *CorrelationId* oluşturan event'lar, instance duplication olmaması adına property'lerde unique constraint'ler uygulamalı			. 			
 	  
@@ -1116,16 +1252,108 @@
 
 # Persistence
 
+- Saga'lar, state bilgisini koruyan event-based mesaj consumer'larıdır. Event'lar arasında state'i kaydetmek önemlidir. 
+  State kalıcı hale getirilmediğinde, bir saga her event'ı yeni bir olay olarak değerlendirecek ve sonraki olayların orchestration'ını bozacak ve hatalı bir duruma yol açacaktır.
+
+- Saga state'ini depolamak için bir tür *sage persistance* yöntemi kullanmamız gerekir. MassTransit içerisinde birkaç farklı persistence yöntemi mevcuttur.
+
 ## Order State
+
+- Örnek olarak *OrderState*'i üzerinden konuları işleyebiliriz:
+
+	```
+	public class OrderState :
+		SagaStateMachineInstance
+	{
+		public Guid CorrelationId { get; set; }
+		public string CurrentState { get; set; }
+
+		public DateTime? OrderDate { get; set; }
+	}
+	```
 
 ## Container Integration
 
+- `AddMassTransit` container extension'ını kullanırken saga registration için bir repository tanımı yapılması gerekir. Örnek olarak in-memory repository kullanımı:
+	
+	```
+	container.AddMassTransit(cfg =>
+	{
+		cfg.AddSagaStateMachine<OrderStateMachine, OrderState>()
+			.InMemoryRepository();
+	});
+	```
+
+- Saga repository'si her zaman *Singleton* lifecycle olarak register edilir.
+- Eğer container registration kullanılmıyor ise saga repository manuel olarak oluşturulabilir ve receive endpoint'inde belirtilebilir. Örnek olarak:
+
+	```
+	var orderStateMachine = new OrderStateMachine();
+	var repository = new InMemorySagaRepository<OrderState>();
+
+	var busControl = Bus.Factory.CreateUsingInMemory(x =>
+	{
+		x.ReceiveEndpoint("order-state", e =>
+		{
+			e.StateMachineSaga(orderStateMachine, repository);
+		});
+	});
+	```
+
+- Saga repository'lerin 2 türü vardır: *Query Repository* ve *Identity-only Repository*.
+- Persistence mekanizmasına bağlı olarak, repository uygulaması *Identity-only* veya *identity + query* şeklinde olabilir.
+- *Identity-only* repository'i kullanırken (Azure Service Bus veya Redis gibi) yalnızca kimlik ile (identity ile) ilişkilendirme (correlation) kullanabiliriz.
+  Bu, saga'nın aldığı bütün event'ların *saga correlation id*'ye sahip olması gerektiğini ve her event için ilişkilendirmenin yalnızca *CorrelateById* yöntemi ile tanımlanabileceği anlamına gelir.
+
+- *Query* repository de tanım gereği kimlik ilişkilendirmesini (identity correlation) destekler, ancak buna ek olarak alınan event'ların diğer property'lerini ve saga state property'lerini de destekler.
+  Bu tür ilişkilendirmeleri *CorrelateBy* fonksiyonu ile yapılabilir. Ayrıca bu yöntemde event'ların datalarını ve saga state'lerinin property'lerini kullanarak mantıksal ifadeler de kurulabilir.
+
 ## Identity
+
+- Saga instance'ları *Guid* değer ile *CorrelationId* olarak kimliklendirilir. Event'lar saga instance'ları ile ya unique bir *Guid* ile ilişkilendirilir ya da saga instance'ındaki property'leri her event ile ilişkilendiren bir expression aracılığı ile ilişkilendirilir.
+  Eğer *CorrelationId* kullanılıyorsa, her zaman 1-1 eşleşme sağlanır: ya saga zaten mevcuttur ya da yeni bir instance oluşturulur.
+  Eğer expression kullanılırsa expression birden fazla saga instance'ı ile eşleşebilir. Bu nedenle dikkatli olunmalıdır, çünkü event eşleşen tüm instance'lara iletilecektir.
+- *CorrelationId*'nin tabloda key olarak kullanılması şiddetle tavsiye edilir. Bu, daha iyi eşzamanlılık yönetimi sağlayacak ve saga state'inin tutarlılığını koruyacaktır.
 
 ## Publishing and Sending From Sagas
 
+- Saga'lar tamamen message-driven durumdalar. Bu nedenle sadece mesaj consume etmezler, yeni event'lar yayınlayabilirler veya yeni command'lar gönderebilirler.
+- Eğer bir saga aynı anda çok fazla mesaj alıyorsa ve endpoint birden fazla mesajı paralel olarak işlemeye ayarlanmışsa bu durum mesajların işlenmesi ile saga kalıcılığı arasında bir conflict oluşturabilir.
+  Bu, aynı anda kalıcı hale getirilen birden fazla saga state güncellemesi olabileceği anlamına gelir. Saga repository'sinin türüne bağlı olarak bu durum farklı nedenlerle başarısız olabilir (versiyonlama sorunu, satırın veya tablonun lock'lanması veya eTag uyuşmazlığı vb.).
+  Bütün bu durumlar aslında şunu belirtir, eşzamanlılık (concurrency) sorunu vardır ve bu durumun çözümü için bir strateji belirlenmelidir.
+- Bu tür durumlarda saga repository'nin exception fırlatması normaldir. Ancak eğer saga bir mesaj yayınlıyorsa, bu mesajlar zaten yayınlanmış olabilir fakat saga state'i güncellenememiş olabilir.
+  MassTransit enpoint'te retry policy'i uygulayacaktır ve daha da fazla mesaj gönderilecektir, bu da potansiyel olarak bir karmaşaya (*mess*) yol açabilir.
+  Èğer bir retry policy tanımlanmadıysa, saga mesajları yayınlar fakat state güncellenmeyeceği için yeni gelen mesajları yanlış state'te olduğundan kabul etmeyebilir.
+
+  Bu yaygın bir sorundur, tüm persistance işlemlerini tamamlayana kadar publish ve send işlemlerini erteleme stratejisi kullanılabilir. Yayınlanması gereken bütün mesajlar *Outbox* isimli buffer içerisinde toplanır. Örnek olarak şöyle kullanılabilir:
+
+	```
+	c.ReceiveEndpoint("queue", e =>
+	{
+		e.UseInMemoryOutbox();
+		// other endpoint configuration here
+	}
+	``` 
+
+
 ## Relational DB Recommendations
+
+- Yeni bir sistem geliştiriyorsak ve Saga DB Entity'i *CorrelationId*'yi primary key olacak şekilde tanımlayabiliyorsak bu harika olur.
+- Mevcut bir DB üzerinde çalışıyorsak saga'nın hızlı çalışmasını sağlamak için (optimistic veya pessimistic farketmez) şu adımlara dikkat etmeliyiz:
+  
+	- *CorrelationId*, tercihen primary key + clustered olmalı.
+	- Eğer bu mümkün değilse, clustered index + unique olarak tanımlanmalı. 
+	- Ayrıca veritabanı dostu Guid'ler oluşturmak için *NewId* paketinin kullanılması şiddetle tavsiye edilir.
+
 
 ## Optimistic vs pessimistic concurrency
 
-# Guidance
+- MassTransit tarafından desteklenen bir çok saga persistance mekanizması, saga'ları işlerken *ACID* garantisi sağlamak için bir yönteme ihtiyaç duyar.Çünkü aynı saga instance'ı için birdne fazla thread
+  birden fazla bus event'ını tüketebilir ve bu durum *race condition*'a yol açarak güncellemelerin birbirlerini ezmesine neden olabilir. İlişkisel veritabanları, transaction türünü *serializable* olarak 
+  ayarlayarak veya sayfa/satır kilitleme (page/row locking) kullanarak bu durumu kolayca yönetebilir. Bu durum *pessimistic concurrency* olarak adlandırılır.
+ 
+- *Concurrency*'i yönetmenin başka bir yolu, saga her kalıcı hale getirildiğinde version numarasını veya timestamp attribute'unu güncellemektir. Bu durum *optimistic concurrency* olarak adlandırılır.
+  Bu yaklaşım veritabanı işlemlerinin başarılı olacağını garanti etmez (bu tür durumlarda retry policy gereklidir). Ancak, tabloyu veya sayfayı kilitlemeyeceği için başkalarının aynı veritabanı ile çalışmasını engellemez.
+
+- Neredeyse her senaryoda *optimistic concurrency* kullanılması önerilir, çünkü çoğu state machine mantığı oldukça hızlı çalışmalıdır.
+- Eğer seçilen persistance mekanizması *optimistic concurrency* destekliyorsa, concurrency exception'larına karşı bir retry policy tanımlayarak veya genel bir retry policy tanımlayarak race condition durumu kolayca yönetilebilir.
